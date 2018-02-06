@@ -6,16 +6,20 @@ import numpy as np
 
 data = np.loadtxt('magic04.data',delimiter=',') # shape is -1,11
 np.random.shuffle(data)
-unlabelled_data = data[:12000]
-train_data = data[12000:14000]
+unlabelled_data = data[:100]
+train_data = data[13900:14000]
 test_data = data[14000:]
 del data
 train_data_x = train_data[:,:10]
 train_labels = train_data[:,10]
+# train_data_x = train_data_x-np.mean(train_data_x,axis=0)
+# train_data_x = train_data_x/np.std(train_data_x,axis=0)
 pos_x = train_data_x[train_labels==1]
 neg_x = train_data_x[train_labels==0]
 
 test_data_x = test_data[:,:10]
+# test_data_x = test_data_x-np.mean(test_data_x,axis=0)
+# test_data_x = test_data_x/np.std(test_data_x,axis=0)
 test_labels = test_data[:,10]
 test_pos = test_data_x[test_labels==1]
 test_neg = test_data_x[test_labels==0]
@@ -23,16 +27,18 @@ test_labels = 2*test_labels-1
 test_labels = test_labels.reshape(-1,1)
 
 unlabelled_data_x = unlabelled_data[:,:10]
+# unlabelled_data_x = unlabelled_data_x-np.mean(unlabelled_data_x,axis=0)
+# unlabelled_data_x = unlabelled_data_x/np.std(unlabelled_data_x,axis=0)
 
-theta_p = 0.35
+theta_p = 0.5
 theta_n = 1.0-theta_p
 
 
 # Parameters
 learning_rate = 0.01
-num_steps = 5000
+num_steps = 3000
 batch_size = 128
-display_step = 300
+display_step = 1000
 num_input = 10
 
 # tf Graph input
@@ -56,6 +62,19 @@ def lossnegg(x):
 	# return tf.reduce_mean(tf.maximum(tf.zeros([tf.shape(x)[0],1]), 1 + x))
 	return tf.reduce_mean(tf.maximum(tf.zeros([tf.shape(x)[0],1]), tf.minimum( tf.zeros([tf.shape(x)[0],1])+2, 1+x ) ))
 
+# def lossplusg_crossentropy(x):
+# 	tf.softmax()
+
+# def softmax(X,axis):
+# 	y = np.atleast_2d(X)
+# 	y = y * float(1.0)
+# 	y = y - np.expand_dims(np.max(y, axis = axis), axis)
+# 	y = np.exp(y)
+# 	ax_sum = np.expand_dims(np.sum(y, axis = axis), axis)
+# 	p = y / ax_sum
+# 	if len(X.shape) == 1: p = p.flatten()
+# 	return p
+
 # Construct model
 logits_pos = SVM(X_pos)
 logits_neg = SVM(X_neg)
@@ -70,14 +89,17 @@ hinge_loss_PN = theta_p*lossplusg(logits_pos)+theta_n*lossnegg(logits_neg)
 hinge_loss_PU = lossnegg(logits_unlabelled)-theta_p*lossnegg(logits_pos)+theta_p*lossplusg(logits_pos)
 hinge_loss_NU = lossplusg(logits_unlabelled)-theta_n*lossplusg(logits_neg)+theta_n*lossnegg(logits_neg)
 
-def run(gamma):
-	# loss_op = hinge_loss_NU*gamma + hinge_loss_PU * (1-gamma) + regularization_loss # PUNU
-	# loss_op = hinge_loss_PN + regularization_loss #PN
-
-	if gamma >=0 : # PNU
-		loss_op = hinge_loss_PU*gamma+hinge_loss_PN*(1-gamma)+regularization_loss
+def run(gamma,run_type):
+	
+	if run_type == 'pn':
+		loss_op = hinge_loss_PN + regularization_loss #PN
+	elif run_type == 'punu':
+		loss_op = hinge_loss_NU*gamma + hinge_loss_PU * (1-gamma) + regularization_loss # PUNU
 	else:
-		loss_op = hinge_loss_NU*gamma+hinge_loss_PN*(1-gamma)+regularization_loss
+		if gamma >=0 : # PNU
+			loss_op = hinge_loss_PU*gamma+hinge_loss_PN*(1-gamma)+regularization_loss
+		else:
+			loss_op = hinge_loss_NU*gamma+hinge_loss_PN*(1-gamma)+regularization_loss
 
 	train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss_op)
 	# train_op = tf.train.GradientDescentOptimizer(learning_rate=learning_rate).minimize(loss_op)
@@ -127,8 +149,17 @@ def run(gamma):
 		# save_path = tf.train.Saver([v for v in tf.global_variables()]).save(sess, 'models/model_pnu.ckpt')
 		# print("Model saved in file: %s" % save_path)
 
+print("PN risk")
+run(0,'pn')
 
+print("PUNU risk")
+eta = 0.0
+while eta <=1.04:
+	run(eta,'punu')
+	eta += 0.05
+
+print("PNU risk")
 eta = -1.0
 while eta <=1.04:
-	run(eta)
+	run(eta,'pnu')
 	eta += 0.1
