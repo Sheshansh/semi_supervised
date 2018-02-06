@@ -1,47 +1,64 @@
+from __future__ import print_function
+from tensorflow.examples.tutorials.mnist import input_data
+mnist = input_data.read_data_sets("/tmp/data/", one_hot=True)
 import tensorflow as tf
 import numpy as np
 
-data = np.loadtxt('magic04.data',delimiter=',') # shape is -1,11
-np.random.shuffle(data)
-# unlabelled_data = data[:0]
-train_data = data[:500]
-test_data = data[14000:]
-del data
-train_data_x = train_data[:,:10]
-train_labels = train_data[:,10]
-train_labels = np.array(list(zip(1-train_labels,train_labels)))
-# train_data_x = train_data_x-np.mean(train_data_x,axis=0)
-# train_data_x = train_data_x/np.std(train_data_x,axis=0)
-# pos_x = train_data_x[train_labels[:,1]==1]
-# neg_x = train_data_x[train_labels[:,1]==0]
+posdigit = 8
+negdigit = 3
+labelled_unlabelled_split_barrier = 2000
 
-test_data_x = test_data[:,:10]
-# test_data_x = test_data_x-np.mean(test_data_x,axis=0)
-# test_data_x = test_data_x/np.std(test_data_x,axis=0)
-test_labels = test_data[:,10]
-test_labels = np.array(list(zip(1-test_labels,test_labels)))
-test_pos = test_data_x[test_labels[:,1]==1]
-test_neg = test_data_x[test_labels[:,1]==0]
-test_pos_labels = np.array(list(zip(1-np.array([1]*test_pos.shape[0]),np.array([1]*test_pos.shape[0]))))
-test_neg_labels = np.array(list(zip(1-np.array([0]*test_neg.shape[0]),np.array([0]*test_neg.shape[0]))))
+theta_p = 0.5
+theta_n = 1-theta_p
 
-# unlabelled_data_x = unlabelled_data[:,:10]
-# unlabelled_data_x = unlabelled_data_x-np.mean(unlabelled_data_x,axis=0)
-# unlabelled_data_x = unlabelled_data_x/np.std(unlabelled_data_x,axis=0)
+train_data_x = mnist.train.images
+train_labels = mnist.train.labels
+train_data_x,unlabelled_data_x = train_data_x[:labelled_unlabelled_split_barrier],train_data_x[labelled_unlabelled_split_barrier:]
+train_labels,unlabelled_labels = train_labels[:labelled_unlabelled_split_barrier],train_labels[labelled_unlabelled_split_barrier:]
 
-theta_p = 0.35
-theta_n = 1.0-theta_p
+pos_x = train_data_x[train_labels[:,posdigit]==1]
+neg_x = train_data_x[train_labels[:,negdigit]==1]
+pos_x,neg_x = pos_x[:min(pos_x.shape[0],neg_x.shape[0])],neg_x[:min(pos_x.shape[0],neg_x.shape[0])]
+train_data_x = np.concatenate((pos_x,neg_x))
+train_labels = np.concatenate((np.array([1.0]*pos_x.shape[0]),np.array([0.0]*neg_x.shape[0]))).reshape(-1,1)
+train_labels = np.array(list(zip(1.0-train_labels[:,0],train_labels[:,0])))
+# del train_labels,train_data_x
 
+test_data_x = mnist.test.images
+test_labels = mnist.test.labels
+
+# # Equalise data:
+test_pos = test_data_x[test_labels[:,posdigit]==1]
+test_neg = test_data_x[test_labels[:,negdigit]==1]
+test_pos,test_neg = test_pos[:min(test_pos.shape[0],test_neg.shape[0])],test_neg[:min(test_pos.shape[0],test_neg.shape[0])]
+test_data_x = np.concatenate((test_pos,test_neg))
+test_labels = np.concatenate((np.array([1.0]*test_pos.shape[0]),np.array([0.0]*test_neg.shape[0]))).reshape(-1,1)
+test_labels = np.array(list(zip(1.0-test_labels[:,0],test_labels[:,0])))
+test_pos_labels = np.array([0.0]*test_pos.shape[0])
+test_pos_labels = np.array(list(zip(1.0-test_pos_labels,test_pos_labels)))
+test_neg_labels = np.array([1.0]*test_neg.shape[0])
+test_neg_labels = np.array(list(zip(1.0-test_neg_labels,test_neg_labels)))
+# print(test_pos.shape,test_neg.shape)
+unlabelled_pos = unlabelled_data_x[unlabelled_labels[:,posdigit]==1]
+unlabelled_neg = unlabelled_data_x[unlabelled_labels[:,negdigit]==1]
+unlabelled_pos,unlabelled_neg = unlabelled_pos[:min(unlabelled_pos.shape[0],unlabelled_neg.shape[0])],unlabelled_neg[:min(unlabelled_pos.shape[0],unlabelled_neg.shape[0])]
+# print(unlabelled_pos.shape,unlabelled_neg.shape)
+unlabelled_data_x = np.concatenate((unlabelled_pos,unlabelled_neg))
+del unlabelled_neg,unlabelled_pos,unlabelled_labels
+
+print(unlabelled_data_x.shape)
+print(pos_x.shape,neg_x.shape)
+print(test_pos.shape,test_neg.shape)
 
 # Parameters
 learning_rate = 0.001
-num_steps = 5000
+num_steps = 2000
 batch_size = 500
 display_step = 100
-num_input = 10
+num_input = 784
 num_classes = 2
-n_hidden_1 = 200
-n_hidden_2 = 200
+n_hidden_1 = 4
+n_hidden_2 = 3
 
 # tf Graph input
 X = tf.placeholder("float", [None, num_input])
@@ -73,6 +90,7 @@ def neural_net(x):
 	out_layer = tf.matmul(layer_2, weights['out']) + biases['out']
 	return out_layer
 
+# tf.nn.softmax instead
 # def softmax(X,axis):
 # 	y = np.atleast_2d(X)
 # 	y = y * float(1.0)
@@ -82,6 +100,10 @@ def neural_net(x):
 # 	p = y / ax_sum
 # 	if len(X.shape) == 1: p = p.flatten()
 # 	return p
+
+# def softmax_cross_entropy_pos(logits_pos):
+	
+
 
 # Construct model
 
@@ -142,12 +164,12 @@ def run(gamma,run_type):
 		# print("Optimization Finished!")
 		# Calculate accuracy for MNIST test images
 		print(gamma,",", \
-			# sess.run(accuracy, feed_dict={X: test_pos,
-			# 							  Y: test_neg_labels})
-			# , ",",
-			# sess.run(accuracy, feed_dict={X: test_neg,
-			# 							  Y: test_pos_labels})
-			# , ",",
+			sess.run(accuracy, feed_dict={X: test_pos,
+										  Y: test_neg_labels})
+			, ",",
+			sess.run(accuracy, feed_dict={X: test_neg,
+										  Y: test_pos_labels})
+			, ",",
 			sess.run(accuracy, feed_dict={X: test_data_x,
 										  Y: test_labels})
 			)
