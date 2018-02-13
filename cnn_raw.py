@@ -8,12 +8,19 @@ mnist = input_data.read_data_sets("/tmp/data/", one_hot=True)
 # Training Parameters
 learning_rate = 0.001
 num_steps = 200
-batch_size = 128
+batch_size = 100
 display_step = 10
+num_batches = 100
+theta_p = 0.5
+theta_n = 1-theta_p
 
 def convert_to_binary(test_labels):
     test_labels = np.array(list(zip(list(test_labels[:,0]+test_labels[:,2]+test_labels[:,4]+test_labels[:,6]+test_labels[:,8]),list(test_labels[:,1]+test_labels[:,3]+test_labels[:,5]+test_labels[:,7]+test_labels[:,9]))))
     return test_labels
+
+x_batches = np.array_split(mnist.train.images[:10000],num_batches)
+y_batches = np.array_split(convert_to_binary(mnist.train.labels[:10000]),num_batches)
+unlabelled_batches = np.array_split(mnist.train.images[10000:],num_batches)
 
 # Network Parameters
 num_input = 784 # MNIST data input (img shape: 28*28)
@@ -23,10 +30,15 @@ dropout = 0.75 # Dropout, probability to keep units
 # tf Graph input
 X = tf.placeholder(tf.float32, [None, num_input])
 X_pos = tf.placeholder(tf.float32, [None, num_input])
-Y_pos = tf.placeholder(tf.float32, [None, num_classes])
+Y_pos_pos = tf.placeholder(tf.float32, [None, num_classes])
+Y_pos_neg = tf.placeholder(tf.float32, [None, num_classes])
 X_neg = tf.placeholder(tf.float32, [None, num_input])
-Y_neg = tf.placeholder(tf.float32, [None, num_classes])
+Y_neg_neg = tf.placeholder(tf.float32, [None, num_classes])
+Y_neg_pos = tf.placeholder(tf.float32, [None, num_classes])
 Y = tf.placeholder(tf.float32, [None, num_classes])
+X_u = tf.placeholder(tf.float32, [None, num_input])
+Y_u_pos = tf.placeholder(tf.float32, [None, num_classes])
+Y_u_neg = tf.placeholder(tf.float32, [None, num_classes])
 keep_prob = tf.placeholder(tf.float32) # dropout (keep probability)
 
 
@@ -96,12 +108,26 @@ biases = {
 logits = conv_net(X, weights, biases, keep_prob)
 logits_pos = conv_net(X_pos, weights, biases, keep_prob)
 logits_neg = conv_net(X_neg, weights, biases, keep_prob)
+logits_u = conv_net(X_u, weights, biases, keep_prob)
 prediction = tf.nn.softmax(logits)
 
 # Define loss and optimizer
-loss_op = 0.5*tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-    logits=logits_pos, labels=Y_pos))+0.5*tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
-    logits=logits_neg, labels=Y_neg))
+pn_loss = theta_p*tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits_pos, labels=Y_pos_pos))\
+    +theta_n*tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits_neg, labels=Y_neg_neg))
+
+pu_loss = theta_p*tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits_pos, labels=Y_pos_pos)) \
+    + tf.maximum( tf.zeros(1), \
+    - theta_p*tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits_pos, labels=Y_pos_neg)) \
+    + tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits_u, labels=Y_u_neg)) \
+    )
+
+nu_loss = theta_n*tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits_neg, labels=Y_neg_neg)) \
+    + tf.maximum( tf.zeros(1), \
+    - theta_n*tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits_neg, labels=Y_neg_pos)) \
+    + tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits_u, labels=Y_u_pos)) \
+    )
+
+loss_op = 0.5*pu_loss+0.5*nu_loss
 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
 train_op = optimizer.minimize(loss_op)
 
@@ -120,28 +146,44 @@ with tf.Session() as sess:
     sess.run(init)
 
     for step in range(1, num_steps+1):
-        batch_x, batch_y = mnist.train.next_batch(batch_size)
-        batch_y = convert_to_binary(batch_y)
+        # batch_x, batch_y = mnist.train.next_batch(batch_size)
+        batch_x = x_batches[step%num_batches]
+        batch_y = y_batches[step%num_batches]
+        batch_u = unlabelled_batches[step%num_batches]
         # Run optimization op (backprop)
         sess.run(train_op, feed_dict={
             X_pos : batch_x[batch_y[:,1]==1],
-            Y_pos : batch_y[batch_y[:,1]==1],
+            Y_pos_pos : batch_y[batch_y[:,1]==1],
+            Y_pos_neg : 1-batch_y[batch_y[:,1]==1],
             X_neg : batch_x[batch_y[:,1]==0],
-            Y_neg : batch_y[batch_y[:,1]==0],
-            X: batch_x, Y: batch_y, keep_prob: 0.8})
+            Y_neg_neg : batch_y[batch_y[:,1]==0],
+            Y_neg_pos : 1-batch_y[batch_y[:,1]==0],
+            X_u : batch_u,
+            Y_u_pos : np.array([[0,1]]*(batch_u.shape[0])),
+            Y_u_neg : np.array([[1,0]]*(batch_u.shape[0])),
+            X : batch_x, Y: batch_y, keep_prob: 0.8})
         if step % display_step == 0 or step == 1:
             # Calculate batch loss and accuracy
             loss, acc = sess.run([loss_op, accuracy], feed_dict={
-                                                                 X_pos : batch_x[batch_y[:,1]==1],
-                                                                 Y_pos : batch_y[batch_y[:,1]==1],
-                                                                 X_neg : batch_x[batch_y[:,1]==0],
-                                                                 Y_neg : batch_y[batch_y[:,1]==0],
-                                                                 X: batch_x,
-                                                                 Y: batch_y,
-                                                                 keep_prob: 1.0})
+                                                                X_pos : batch_x[batch_y[:,1]==1],
+                                                                Y_pos_pos : batch_y[batch_y[:,1]==1],
+                                                                Y_pos_neg : 1-batch_y[batch_y[:,1]==1],
+                                                                X_neg : batch_x[batch_y[:,1]==0],
+                                                                Y_neg_neg : batch_y[batch_y[:,1]==0],
+                                                                Y_neg_pos : 1-batch_y[batch_y[:,1]==0],
+                                                                X_u : batch_u,
+                                                                Y_u_pos : np.array([[0,1]]*(batch_u.shape[0])),
+                                                                Y_u_neg : np.array([[1,0]]*(batch_u.shape[0])),
+                                                                X: batch_x,
+                                                                Y: batch_y,
+                                                                keep_prob: 1.0})
             print("Step " + str(step) + ", Minibatch Loss= " + \
-                  "{:.4f}".format(loss) + ", Training Accuracy= " + \
-                  "{:.3f}".format(acc))
+                  # "{:.4f}".format(loss) + ", Training Accuracy= " + \
+                  str(loss) + ", Training Accuracy= " + \
+                  "{:.3f}".format(acc),"Testing Accuracy:", \
+                    sess.run(accuracy, feed_dict={X: mnist.test.images[:256],
+                                                  Y: convert_to_binary(mnist.test.labels[:256]),
+            keep_prob: 1.0}))
 
     print("Optimization Finished!")
 
