@@ -1,0 +1,10 @@
+so, this method fails to improve upon the pn classification in the experiments I tried on MNIST.
+
+But PN classification can give high variance on accuracies but with unllabelled data the accuracy doesn't fluctuate very much.
+
+Probably this is what is meant by the variance reduction claim.
+
+For Ex : Even after convergence, the accuracy varies between 91-95.7%
+But with unlabelled samples, the accuracy lies between 94-94.6%.
+
+Which is better is not very clear and hence, let's drop this idea to apply on other images.

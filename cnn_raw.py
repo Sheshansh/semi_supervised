@@ -1,26 +1,56 @@
 from __future__ import division, print_function, absolute_import
-
+from random import *
+import random
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import tensorflow as tf
 import numpy as np
-from tensorflow.examples.tutorials.mnist import input_data
-mnist = input_data.read_data_sets("/tmp/data/", one_hot=True)
+num_batches = 100
+
+# from tensorflow.examples.tutorials.mnist import input_data
+# mnist = input_data.read_data_sets("data/", one_hot=True)
+# data = mnist.train.images
+# random_data = np.concatenate((data,data))
+# for i in range(random_data.shape[0]):
+#     random_row = [random.uniform(0.5,1.0) for j in range(28)]
+#     row_number = randint(0,27) # randomly generated
+#     random_data[i,row_number*28:row_number*28+28] = random_row
+# def make_labels(num_pos,num_neg):
+#     return np.concatenate((np.array([[0,1]]*num_pos),np.array([[1,0]]*num_neg)))
+# total_data = np.concatenate((data,random_data))
+# total_labels = make_labels(data.shape[0],random_data.shape[0])
+# p = np.random.permutation(len(total_data))
+# total_data = total_data[p]
+# total_labels = total_labels[p] # simultaneous shuffling
+# del data
+# del mnist
+# del random_data
+# np.save('total_data.npy',total_data)
+# np.save('total_labels.npy',total_labels)
+
+total_data = np.load('total_data.npy')
+total_labels = np.load('total_labels.npy')
+
+num_train = 5000
+num_test = 10000
+train_data = total_data[:num_train]
+train_labels = total_labels[:num_train]
+test_data = total_data[num_train:num_train+num_test]
+test_labels = total_labels[num_train:num_train+num_test]
+unlabelled_data = total_data[num_train+num_test:]
+unlabelled_labels = total_labels[num_train+num_test:]
+x_batches = np.array_split(train_data,num_batches)
+y_batches = np.array_split(train_labels,num_batches)
+unlabelled_batches = np.array_split(unlabelled_data,num_batches)
 
 # Training Parameters
 learning_rate = 0.001
-num_steps = 10
+num_steps = 300
 batch_size = 100
-display_step = 1
+display_step = 10
 num_batches = 10
-theta_p = 0.5
+theta_p = 0.2
 theta_n = 1-theta_p
-
-def convert_to_binary(test_labels):
-    test_labels = np.array(list(zip(list(test_labels[:,0]+test_labels[:,2]+test_labels[:,4]+test_labels[:,6]+test_labels[:,8]),list(test_labels[:,1]+test_labels[:,3]+test_labels[:,5]+test_labels[:,7]+test_labels[:,9]))))
-    return test_labels
-
-x_batches = np.array_split(mnist.train.images[:500],num_batches)
-y_batches = np.array_split(convert_to_binary(mnist.train.labels[:500]),num_batches)
-unlabelled_batches = np.array_split(mnist.train.images[10000:],num_batches)
 
 # Network Parameters
 num_input = 784 # MNIST data input (img shape: 28*28)
@@ -118,18 +148,20 @@ pn_loss = theta_p*tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=
 pu_loss_neg_comp = - theta_p*tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits_pos, labels=Y_pos_neg))
 pu_loss_unlabelled = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits_u, labels=Y_u_neg)) 
 pu_loss = theta_p*tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits_pos, labels=Y_pos_pos)) \
-     +pu_loss_neg_comp + pu_loss_unlabelled
-    # + tf.maximum( tf.zeros(1), \
-    # )
+    + tf.maximum( tf.zeros(1), \
+     pu_loss_neg_comp + pu_loss_unlabelled
+    )
 
 nu_loss = theta_n*tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits_neg, labels=Y_neg_neg)) \
+    + tf.maximum( tf.zeros(1), \
     - theta_n*tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits_neg, labels=Y_neg_pos)) \
     + tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits_u, labels=Y_u_pos))  \
-    # + tf.maximum( tf.zeros(1), \
-    # )
+    )
 
-# loss_op = 0.5*pu_loss+0.5*nu_loss
-loss_op = pu_loss
+gamma = 0.0
+# loss_op = (1-gamma)*pn_loss+gamma*nu_loss
+loss_op = (1-gamma)*pn_loss+gamma*pu_loss
+# loss_op = pn_loss
 optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
 train_op = optimizer.minimize(loss_op)
 
@@ -148,7 +180,6 @@ with tf.Session() as sess:
     sess.run(init)
 
     for step in range(1, num_steps+1):
-        # batch_x, batch_y = mnist.train.next_batch(batch_size)
         batch_x = x_batches[step%num_batches]
         batch_y = y_batches[step%num_batches]
         batch_u = unlabelled_batches[step%num_batches]
@@ -166,7 +197,7 @@ with tf.Session() as sess:
             X : batch_x, Y: batch_y, keep_prob: 0.8})
         if step % display_step == 0 or step == 1:
             # Calculate batch loss and accuracy
-            loss,loss1,loss2,acc = sess.run([loss_op, pu_loss_unlabelled, pu_loss_neg_comp, accuracy], feed_dict={
+            loss,acc = sess.run([loss_op, accuracy], feed_dict={
                                                                 X_pos : batch_x[batch_y[:,1]==1],
                                                                 Y_pos_pos : batch_y[batch_y[:,1]==1],
                                                                 Y_pos_neg : 1-batch_y[batch_y[:,1]==1],
@@ -181,18 +212,18 @@ with tf.Session() as sess:
                                                                 keep_prob: 1.0})
             print("Step " + str(step) + ", Minibatch Loss= " + \
                   # "{:.4f}".format(loss) + ", Training Accuracy= " + \
-                  str(loss) + ", " + str(loss1) + "," + str(loss2) + ", Training Accuracy= " + \
+                  str(loss) + ", " + str(loss) + "," + str(loss) + ", Training Accuracy= " + \
                   "{:.3f}".format(acc),"Testing Accuracy:", \
-                    sess.run(accuracy, feed_dict={X: mnist.test.images[:256],
-                                                  Y: convert_to_binary(mnist.test.labels[:256]),
+                    sess.run(accuracy, feed_dict={X: test_data,
+                                                  Y: test_labels,
             keep_prob: 1.0}))
 
     print("Optimization Finished!")
 
     # Calculate accuracy for 256 MNIST test images
     print("Testing Accuracy:", \
-        sess.run(accuracy, feed_dict={X: mnist.test.images[:256],
-                                      Y: convert_to_binary(mnist.test.labels[:256]),
+        sess.run(accuracy, feed_dict={X: test_data,
+                                      Y: test_labels,
     keep_prob: 1.0}))
     save_path = tf.train.Saver().save(sess, 'models/cnn_model.ckpt')
     print("Model saved in file: %s" % save_path)
